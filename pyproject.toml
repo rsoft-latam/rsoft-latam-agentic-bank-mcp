@@ -1,0 +1,32 @@
+[project]
+name = "rsoft-agentic-bank-mcp"
+version = "0.1.0"
+description = "MCP Server for RSoft Agentic Bank — Supabase, LangGraph & Base Network"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp[cli]>=1.2.0",
+    "supabase>=2.11.0",
+    "web3>=7.6.0",
+    "langgraph>=0.2.0",
+    "langchain-openai>=0.3.0",
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.7.0",
+    "python-dotenv>=1.0.0",
+    "httpx>=0.28.0",
+    "uvicorn>=0.34.0",
+    "starlette>=0.45.0",
+]
+
+[project.scripts]
+rsoft-bank-mcp = "rsoft_agentic_bank.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rsoft_agentic_bank"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
