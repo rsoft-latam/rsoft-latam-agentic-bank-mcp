@@ -148,7 +148,7 @@ Lambda handler: `app.main.lambda_handler`
 ```bash
 docker buildx create --name lambda-builder --use
 docker buildx inspect --bootstrap
-docker buildx build --platform linux/amd64 -t rsoft-agentic-bank-moltbook . --load
+docker buildx build --platform linux/amd64 -t rsoft-agentic-bank-mcp . --load
 ```
 
 ## Deploy to ECR

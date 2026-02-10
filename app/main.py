@@ -35,6 +35,7 @@ mcp = FastMCP(
     ),
     host=_settings.mcp_host,
     port=_settings.mcp_port,
+    stateless_http=True,
 )
 
 
@@ -153,14 +154,22 @@ def main() -> None:
 
 
 # ── AWS Lambda handler ───────────────────────────────────────────────────────
-# FastMCP exposes an ASGI app via .streamable_http_app()
-# Mangum wraps it so API Gateway/Lambda can invoke it.
+# Each Lambda invocation needs a fresh ASGI app because
+# StreamableHTTPSessionManager can only be run() once per instance.
 
 try:
     from mangum import Mangum
-    handler = Mangum(mcp.streamable_http_app(), lifespan="off")
+
+    def lambda_handler(event, context):
+        # Reset session manager so a fresh one is created per invocation.
+        # StreamableHTTPSessionManager.run() can only be called once per instance.
+        mcp._session_manager = None
+        asgi_app = mcp.streamable_http_app()
+        handler = Mangum(asgi_app, lifespan="auto")
+        return handler(event, context)
+
 except ImportError:
-    handler = None
+    lambda_handler = None
 
 
 if __name__ == "__main__":
