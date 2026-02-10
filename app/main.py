@@ -1,10 +1,8 @@
 """RSoft Agentic Bank — MCP Server.
 
-Exposes banking tools (solvency checks, loan requests) and resources
-(interest rates) to LLM agents via the Model Context Protocol.
-
-Supports both STDIO (local/testing) and HTTP+SSE (AWS Lambda / production)
-transports.
+Thin proxy layer that exposes banking tools and resources to LLM agents
+via the Model Context Protocol, delegating all logic to the RSoft Agentic
+Bank backend.
 """
 
 from __future__ import annotations
@@ -14,27 +12,29 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-from rsoft_agentic_bank.backend.blockchain import BlockchainError, ejecutar_transferencia_prestamo
-from rsoft_agentic_bank.backend.langgraph_flow import evaluar_solicitud_prestamo
-from rsoft_agentic_bank.backend.supabase_client import (
-    obtener_historial_crediticio,
-    obtener_tasas_interes,
-    registrar_prestamo,
+from app.backend_client import (
+    consultar_solvencia as _consultar_solvencia,
+    obtener_tasas_interes as _obtener_tasas_interes,
+    solicitar_prestamo as _solicitar_prestamo,
 )
-from rsoft_agentic_bank.config import settings
+from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
 # ── MCP Server instance ─────────────────────────────────────────────────────
+
+_settings = get_settings()
 
 mcp = FastMCP(
     "RSoft_Agentic_Bank",
     instructions=(
         "Servidor bancario inteligente de RSoft Latam. "
         "Permite consultar solvencia crediticia de agentes, solicitar préstamos "
-        "que se evalúan con LangGraph y se ejecutan en la red Base (L2), "
+        "que se evalúan con IA y se ejecutan en la red Base (L2), "
         "y consultar las tasas de interés vigentes."
     ),
+    host=_settings.mcp_host,
+    port=_settings.mcp_port,
 )
 
 
@@ -62,13 +62,12 @@ async def consultar_solvencia(agent_id: str) -> dict[str, Any]:
         deuda_actual (float en USDC) y estado ("activo" | "moroso" | "sin_registro").
     """
     try:
-        resultado = await obtener_historial_crediticio(agent_id)
-        return resultado
+        return await _consultar_solvencia(agent_id)
     except Exception as exc:
         logger.exception("Error al consultar solvencia para %s", agent_id)
         return {
             "error": True,
-            "mensaje": f"No se pudo consultar la solvencia: {exc}",
+            "mensaje": "No se pudo consultar la solvencia del agente.",
             "agent_id": agent_id,
         }
 
@@ -84,12 +83,6 @@ async def solicitar_prestamo(monto: float, agent_id: str) -> dict[str, Any]:
       transferencia on-chain.
     - El agente ya fue verificado con `consultar_solvencia` y desea proceder.
 
-    El flujo interno es:
-    1. Obtiene el historial crediticio del agente desde Supabase.
-    2. Ejecuta el grafo de evaluación de riesgo (LangGraph).
-    3. Si se aprueba, dispara la transferencia de USDC en Base Network.
-    4. Registra el préstamo en la base de datos.
-
     Args:
         monto: Monto del préstamo solicitado en USDC. Debe ser > 0.
                Ejemplo: 5000.00
@@ -102,7 +95,6 @@ async def solicitar_prestamo(monto: float, agent_id: str) -> dict[str, Any]:
         - Si rechazado: incluye motivo del rechazo y estado "rechazado".
         - Si error: incluye detalle del error.
     """
-    # ── Validación básica ────────────────────────────────────────────────
     if monto <= 0:
         return {
             "error": True,
@@ -110,100 +102,15 @@ async def solicitar_prestamo(monto: float, agent_id: str) -> dict[str, Any]:
             "agent_id": agent_id,
         }
 
-    # ── 1. Obtener historial crediticio ──────────────────────────────────
     try:
-        historial = await obtener_historial_crediticio(agent_id)
+        return await _solicitar_prestamo(agent_id=agent_id, monto=monto)
     except Exception as exc:
-        logger.exception("Error obteniendo historial para %s", agent_id)
+        logger.exception("Error al solicitar préstamo para %s", agent_id)
         return {
             "error": True,
-            "mensaje": f"No se pudo obtener el historial crediticio: {exc}",
+            "mensaje": "No se pudo procesar la solicitud de préstamo.",
             "agent_id": agent_id,
         }
-
-    if historial.get("estado") == "sin_registro":
-        return {
-            "error": True,
-            "mensaje": "El agente no tiene historial crediticio registrado.",
-            "agent_id": agent_id,
-        }
-
-    # ── 2. Evaluación de riesgo con LangGraph ────────────────────────────
-    try:
-        evaluacion = await evaluar_solicitud_prestamo(
-            agent_id=agent_id,
-            monto=monto,
-            score=historial["score"],
-            deuda_actual=historial["deuda_actual"],
-        )
-    except Exception as exc:
-        logger.exception("Error en evaluación de riesgo para %s", agent_id)
-        return {
-            "error": True,
-            "mensaje": f"Error durante la evaluación de riesgo: {exc}",
-            "agent_id": agent_id,
-        }
-
-    if not evaluacion["aprobado"]:
-        return {
-            "estado": "rechazado",
-            "agent_id": agent_id,
-            "monto": monto,
-            "motivo": evaluacion["motivo"],
-            "score": evaluacion["score_utilizado"],
-        }
-
-    # ── 3. Transferencia on-chain ────────────────────────────────────────
-    try:
-        tx_result = await ejecutar_transferencia_prestamo(
-            destinatario=agent_id,
-            monto_usdc=monto,
-        )
-    except BlockchainError as exc:
-        logger.error("Blockchain error para %s: %s", agent_id, exc)
-        return {
-            "estado": "error_blockchain",
-            "agent_id": agent_id,
-            "monto": monto,
-            "mensaje": str(exc),
-            "aprobado_internamente": True,
-            "nota": "El préstamo fue aprobado pero la transacción en blockchain falló.",
-        }
-    except Exception as exc:
-        logger.exception("Error inesperado en blockchain para %s", agent_id)
-        return {
-            "estado": "error_blockchain",
-            "agent_id": agent_id,
-            "monto": monto,
-            "mensaje": f"Error inesperado en la transferencia: {exc}",
-            "aprobado_internamente": True,
-        }
-
-    # ── 4. Registrar en DB ───────────────────────────────────────────────
-    try:
-        await registrar_prestamo(
-            agent_id=agent_id,
-            monto=monto,
-            tx_hash=tx_result["tx_hash"],
-            estado="aprobado",
-        )
-    except Exception as exc:
-        logger.warning(
-            "Préstamo transferido (TX %s) pero falló el registro en DB: %s",
-            tx_result["tx_hash"],
-            exc,
-        )
-
-    return {
-        "estado": "aprobado",
-        "agent_id": agent_id,
-        "monto": monto,
-        "tx_hash": tx_result["tx_hash"],
-        "block_number": tx_result["block_number"],
-        "red": "Base (L2)",
-        "moneda": "USDC",
-        "motivo": evaluacion["motivo"],
-    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -219,12 +126,12 @@ async def tasas_interes() -> dict[str, Any]:
     incluyendo moneda (USDC), red (Base) y fecha de última actualización.
     """
     try:
-        return await obtener_tasas_interes()
+        return await _obtener_tasas_interes()
     except Exception as exc:
         logger.exception("Error al obtener tasas de interés")
         return {
             "error": True,
-            "mensaje": f"No se pudieron obtener las tasas de interés: {exc}",
+            "mensaje": "No se pudieron obtener las tasas de interés.",
         }
 
 
@@ -235,12 +142,25 @@ async def tasas_interes() -> dict[str, Any]:
 
 def main() -> None:
     """Launch the MCP server with the configured transport."""
-    transport = settings.mcp_transport.lower()
+    transport = _settings.mcp_transport.lower()
 
     if transport == "sse":
-        mcp.run(transport="sse", host=settings.mcp_host, port=settings.mcp_port)
+        mcp.run(transport="sse")
+    elif transport == "streamable-http":
+        mcp.run(transport="streamable-http")
     else:
         mcp.run(transport="stdio")
+
+
+# ── AWS Lambda handler ───────────────────────────────────────────────────────
+# FastMCP exposes an ASGI app via .streamable_http_app()
+# Mangum wraps it so API Gateway/Lambda can invoke it.
+
+try:
+    from mangum import Mangum
+    handler = Mangum(mcp.streamable_http_app(), lifespan="off")
+except ImportError:
+    handler = None
 
 
 if __name__ == "__main__":

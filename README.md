@@ -1,35 +1,90 @@
 # rsoft-latam-agentic-bank-mcp
 
-MCP Server for **RSoft Agentic Bank** — exposes banking tools to LLM agents via the Model Context Protocol.
+MCP Server proxy for **RSoft Agentic Bank** — exposes banking tools to LLM agents (Moltbook) via the Model Context Protocol, delegating all logic to the RSoft Agentic Bank backend.
+
+## Architecture
+
+```
+Agentes Moltbook  →  MCP Server (this project)  →  Backend rsoft-agentic-bank
+                     thin proxy / adapter             (LangGraph, Supabase, Base Network)
+```
+
+This server does **not** connect directly to Supabase, blockchain, or AI services. It acts as an MCP-compliant layer that forwards requests to the real backend via HTTP.
 
 ## Stack
 
-- **FastMCP** — MCP server framework (STDIO + SSE transports)
-- **Supabase** — Credit history & loan records
-- **LangGraph** — Loan risk-evaluation workflow
-- **Web3.py** — USDC transfers on Base Network (L2)
+- **FastMCP** — MCP server framework (STDIO, Streamable HTTP)
+- **httpx** — Async HTTP client to communicate with the backend
+- **Mangum** — ASGI adapter for AWS Lambda
 
 ## Quick start
 
 ```bash
 # 1. Clone & install
 git clone <repo-url> && cd rsoft-latam-agentic-bank-mcp
-cp .env.example .env   # fill in your keys
-pip install -e .
+cp .env.example .env   # set BACKEND_URL
+pip install -r requirements.txt
 
 # 2. Run (STDIO — local/testing)
-rsoft-bank-mcp
+python -m app.main
 
-# 3. Run (SSE — production / AWS Lambda)
-MCP_TRANSPORT=sse MCP_PORT=8000 rsoft-bank-mcp
+# 3. Run (Streamable HTTP — server mode)
+MCP_TRANSPORT=streamable-http MCP_PORT=8000 python -m app.main
 ```
+
+## Deploy on AWS Lambda
+
+The server includes a Mangum handler ready for Lambda + API Gateway.
+
+```
+API Gateway  →  Lambda  →  Mangum  →  FastMCP (streamable-http)  →  Backend
+```
+
+**Lambda configuration:**
+
+| Setting | Value |
+|---|---|
+| Runtime | Python 3.11+ |
+| Handler | `app.main.handler` |
+| Timeout | 120s (recommended) |
+
+**Environment variables in Lambda:**
+
+```
+BACKEND_URL=https://your-backend.example.com/api/v1
+```
+
+**Steps:**
+
+1. Package the project with dependencies into a `.zip` or container image
+2. Create the Lambda function with handler `app.main.handler`
+3. Set `BACKEND_URL` in the Lambda environment variables
+4. Create an API Gateway (HTTP API) and route all traffic to the Lambda
+5. The MCP endpoint will be available at your API Gateway URL
+
+## Environment variables
+
+| Variable | Description | Default |
+|---|---|---|
+| `BACKEND_URL` | RSoft Agentic Bank backend base URL | `http://localhost:8080/api/v1` |
+| `MCP_TRANSPORT` | `stdio` or `streamable-http` | `stdio` |
+| `MCP_HOST` | Host to bind (HTTP mode) | `0.0.0.0` |
+| `MCP_PORT` | Port to bind (HTTP mode) | `8000` |
+
+## Transports
+
+| Transport | Use case | How to run |
+|---|---|---|
+| `stdio` | Local development / testing | `python -m app.main` |
+| `streamable-http` | HTTP server (direct or container) | `MCP_TRANSPORT=streamable-http python -m app.main` |
+| Lambda | AWS Lambda + API Gateway | Handler: `app.main.handler` |
 
 ## MCP Tools
 
 | Tool | Description |
 |---|---|
-| `consultar_solvencia(agent_id)` | Credit history & score from Supabase |
-| `solicitar_prestamo(monto, agent_id)` | Full loan flow: risk eval → blockchain transfer → DB record |
+| `consultar_solvencia(agent_id)` | Credit history & score for an agent |
+| `solicitar_prestamo(monto, agent_id)` | Full loan flow: risk eval, approval, on-chain transfer |
 
 ## MCP Resources
 
@@ -37,14 +92,76 @@ MCP_TRANSPORT=sse MCP_PORT=8000 rsoft-bank-mcp
 |---|---|
 | `bank://tasas_interes` | Current interest rates |
 
+## Backend endpoints used
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/agentes/{agent_id}/solvencia` | Fetch agent credit history |
+| `POST` | `/prestamos` | Request a loan (`{agent_id, monto}`) |
+| `GET` | `/tasas-interes` | Fetch current interest rates |
+
 ## Project structure
 
 ```
-src/rsoft_agentic_bank/
-├── server.py              # MCP server (tools, resources, transport)
-├── config.py              # Pydantic settings from .env
-└── backend/
-    ├── supabase_client.py # Supabase queries
-    ├── langgraph_flow.py  # Loan risk evaluation graph
-    └── blockchain.py      # Base Network USDC transfers
+app/
+├── main.py             # MCP server (tools, resources, Lambda handler, entrypoint)
+├── config.py           # Pydantic settings from .env
+└── backend_client.py   # httpx client to the real backend
 ```
+
+
+
+## Setup
+
+```bash
+# Clone and enter
+git clone git@github.com:rsoft-latam/rsoft-agentic-bank-moltbook.git
+cd rsoft-agentic-bank-moltbook
+
+# Create virtual environment
+python -m venv .venv && source .venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Configure environment
+cp .env.example .env
+# Edit .env with your keys
+
+# Run locally
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+## Deploy to AWS Lambda
+
+The app is ready for Lambda via [Mangum](https://github.com/jordanerber/mangum):
+
+```python
+# app/main.py exports:
+lambda_handler = Mangum(app, lifespan="off")
+```
+
+Lambda handler: `app.main.lambda_handler`
+
+## Docker Build
+
+```bash
+docker buildx create --name lambda-builder --use
+docker buildx inspect --bootstrap
+docker buildx build --platform linux/amd64 -t rsoft-agentic-bank-moltbook . --load
+```
+
+## Deploy to ECR
+
+```bash
+./deploy.sh
+```
+
+## Environment Variables
+
+See `.env.example` for the full list. Key variables:
+
+- `BANK_CORE_URL` — RSoft Bank Core microservice URL (provides `/stats`)
+- `LLM_API_KEY` / `LLM_MODEL` — OpenAI-compatible LLM for content generation
+- `MOLTBOOK_API_URL` / `MOLTBOOK_API_KEY` — Moltbook feed publishing
+- `RSOFT_MCP_URL` — Redirect target for banking operations
