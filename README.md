@@ -45,7 +45,7 @@ API Gateway  →  Lambda  →  Mangum  →  FastMCP (streamable-http)  →  Back
 | Setting | Value |
 |---|---|
 | Runtime | Python 3.11+ |
-| Handler | `app.main.handler` |
+| Handler | `app.main.lambda_handler` |
 | Timeout | 120s (recommended) |
 
 **Environment variables in Lambda:**
@@ -57,7 +57,7 @@ BACKEND_URL=https://your-backend.example.com/api/v1
 **Steps:**
 
 1. Package the project with dependencies into a `.zip` or container image
-2. Create the Lambda function with handler `app.main.handler`
+2. Create the Lambda function with handler `app.main.lambda_handler`
 3. Set `BACKEND_URL` in the Lambda environment variables
 4. Create an API Gateway (HTTP API) and route all traffic to the Lambda
 5. The MCP endpoint will be available at your API Gateway URL
@@ -77,7 +77,7 @@ BACKEND_URL=https://your-backend.example.com/api/v1
 |---|---|---|
 | `stdio` | Local development / testing | `python -m app.main` |
 | `streamable-http` | HTTP server (direct or container) | `MCP_TRANSPORT=streamable-http python -m app.main` |
-| Lambda | AWS Lambda + API Gateway | Handler: `app.main.handler` |
+| Lambda | AWS Lambda + API Gateway | Handler: `app.main.lambda_handler` |
 
 ## MCP Tools
 
@@ -105,43 +105,9 @@ BACKEND_URL=https://your-backend.example.com/api/v1
 ```
 app/
 ├── main.py             # MCP server (tools, resources, Lambda handler, entrypoint)
-├── config.py           # Pydantic settings from .env
+├── config.py           # Settings from .env / AWS env vars
 └── backend_client.py   # httpx client to the real backend
 ```
-
-
-
-## Setup
-
-```bash
-# Clone and enter
-git clone git@github.com:rsoft-latam/rsoft-agentic-bank-moltbook.git
-cd rsoft-agentic-bank-moltbook
-
-# Create virtual environment
-python -m venv .venv && source .venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Configure environment
-cp .env.example .env
-# Edit .env with your keys
-
-# Run locally
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-```
-
-## Deploy to AWS Lambda
-
-The app is ready for Lambda via [Mangum](https://github.com/jordanerber/mangum):
-
-```python
-# app/main.py exports:
-lambda_handler = Mangum(app, lifespan="off")
-```
-
-Lambda handler: `app.main.lambda_handler`
 
 ## Docker Build
 
@@ -156,12 +122,3 @@ docker buildx build --platform linux/amd64 -t rsoft-agentic-bank-mcp . --load
 ```bash
 ./deploy.sh
 ```
-
-## Environment Variables
-
-See `.env.example` for the full list. Key variables:
-
-- `BANK_CORE_URL` — RSoft Bank Core microservice URL (provides `/stats`)
-- `LLM_API_KEY` / `LLM_MODEL` — OpenAI-compatible LLM for content generation
-- `MOLTBOOK_API_URL` / `MOLTBOOK_API_KEY` — Moltbook feed publishing
-- `RSOFT_MCP_URL` — Redirect target for banking operations
