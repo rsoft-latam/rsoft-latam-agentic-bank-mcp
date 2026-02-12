@@ -1,8 +1,11 @@
-"""RSoft Agentic Bank — MCP Server.
+"""RSoft Agentic Bank — MCP Server + x402 Paid REST API.
 
 Thin proxy layer that exposes banking tools and resources to LLM agents
 via the Model Context Protocol, delegating all logic to the RSoft Agentic
 Bank backend.
+
+Additionally serves paid REST endpoints at /paid/* that require x402
+USDC micropayments on Base (Coinbase L2).
 """
 
 from __future__ import annotations
@@ -10,6 +13,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from fastapi import FastAPI
 from mcp.server.fastmcp import FastMCP
 
 from app.backend_client import (
@@ -40,7 +44,7 @@ mcp = FastMCP(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# TOOLS
+# TOOLS (free via MCP)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
@@ -115,7 +119,7 @@ async def solicitar_prestamo(monto: float, agent_id: str) -> dict[str, Any]:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# RESOURCES
+# RESOURCES (free via MCP)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
@@ -137,6 +141,107 @@ async def tasas_interes() -> dict[str, Any]:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# COMBINED FASTAPI APP (MCP + paid REST + x402 middleware)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _build_combined_app() -> FastAPI:
+    """Build a FastAPI app that serves both MCP and paid REST endpoints."""
+    from app.paid_routes import paid_router
+
+    app = FastAPI(
+        title="RSoft Agentic Bank — MCP + Paid API",
+        version="1.27.0",
+    )
+
+    # Mount paid REST routes
+    app.include_router(paid_router)
+
+    # Mount MCP app at /mcp
+    mcp_app = mcp.streamable_http_app()
+    app.mount("/mcp", mcp_app)
+
+    # Add x402 payment middleware if wallet is configured
+    if _settings.bank_wallet_address:
+        try:
+            from x402.http import (
+                FacilitatorConfig,
+                HTTPFacilitatorClient,
+                PaymentOption,
+            )
+            from x402.http.middleware.fastapi import PaymentMiddlewareASGI
+            from x402.http.types import RouteConfig
+            from x402.mechanisms.evm.exact import ExactEvmServerScheme
+            from x402.server import x402ResourceServer
+
+            facilitator = HTTPFacilitatorClient(
+                FacilitatorConfig(url="https://x402.org/facilitator")
+            )
+
+            server = x402ResourceServer(facilitator)
+            # Base Sepolia = eip155:84532, Base Mainnet = eip155:8453
+            network = (
+                "eip155:84532"
+                if "sepolia" in _settings.x402_network_id
+                else "eip155:8453"
+            )
+            server.register(network, ExactEvmServerScheme())
+
+            routes = {
+                "GET /paid/tasas-interes": RouteConfig(
+                    accepts=[
+                        PaymentOption(
+                            scheme="exact",
+                            pay_to=_settings.bank_wallet_address,
+                            price="$0.001",
+                            network=network,
+                        ),
+                    ],
+                    mime_type="application/json",
+                    description="Tasas de interés vigentes del banco RSoft",
+                ),
+                "POST /paid/prestamo": RouteConfig(
+                    accepts=[
+                        PaymentOption(
+                            scheme="exact",
+                            pay_to=_settings.bank_wallet_address,
+                            price="$0.01",
+                            network=network,
+                        ),
+                    ],
+                    mime_type="application/json",
+                    description="Solicitar préstamo USDC via RSoft Agentic Bank",
+                ),
+            }
+
+            app.add_middleware(PaymentMiddlewareASGI, routes=routes, server=server)
+            logger.info(
+                "x402 middleware enabled: payTo=%s network=%s",
+                _settings.bank_wallet_address,
+                network,
+            )
+
+        except ImportError:
+            logger.warning("x402 library not installed — paid endpoints unprotected")
+        except Exception:
+            logger.exception("Failed to initialize x402 middleware")
+    else:
+        logger.warning("BANK_WALLET_ADDRESS not set — paid endpoints unprotected")
+
+    # Health endpoint
+    @app.get("/health")
+    async def health():
+        return {
+            "status": "ok",
+            "service": "rsoft-agentic-bank-mcp",
+            "x402_enabled": bool(_settings.bank_wallet_address),
+            "pay_to": _settings.bank_wallet_address or None,
+        }
+
+    return app
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # ENTRYPOINT
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -154,18 +259,18 @@ def main() -> None:
 
 
 # ── AWS Lambda handler ───────────────────────────────────────────────────────
-# Each Lambda invocation needs a fresh ASGI app because
-# StreamableHTTPSessionManager can only be run() once per instance.
 
 try:
     from mangum import Mangum
 
+    # Build the combined app (MCP + paid routes + x402)
+    _combined_app = _build_combined_app()
+
     def lambda_handler(event, context):
-        # Reset session manager so a fresh one is created per invocation.
-        # StreamableHTTPSessionManager.run() can only be called once per instance.
+        # Reset MCP session manager per invocation
         mcp._session_manager = None
-        asgi_app = mcp.streamable_http_app()
-        handler = Mangum(asgi_app, lifespan="auto")
+
+        handler = Mangum(_combined_app, lifespan="off")
         return handler(event, context)
 
 except ImportError:
