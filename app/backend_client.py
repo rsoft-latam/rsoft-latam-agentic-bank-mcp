@@ -37,7 +37,7 @@ async def solicitar_prestamo(agent_id: str, monto: float) -> dict[str, Any]:
     client = _get_client()
     response = await client.post(
         "/loans",
-        json={"agent_id": agent_id, "monto": monto},
+        json={"agent_id": agent_id, "amount": monto},
     )
     response.raise_for_status()
     return response.json()

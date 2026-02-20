@@ -72,7 +72,7 @@ async def consultar_solvencia(agent_id: str) -> dict[str, Any]:
         logger.exception("Error al consultar solvencia para %s", agent_id)
         return {
             "error": True,
-            "mensaje": "No se pudo consultar la solvencia del agente.",
+            "message": "No se pudo consultar la solvencia del agente.",
             "agent_id": agent_id,
         }
 
@@ -103,7 +103,7 @@ async def solicitar_prestamo(monto: float, agent_id: str) -> dict[str, Any]:
     if monto <= 0:
         return {
             "error": True,
-            "mensaje": "El monto debe ser mayor a 0.",
+            "message": "El monto debe ser mayor a 0.",
             "agent_id": agent_id,
         }
 
@@ -113,7 +113,7 @@ async def solicitar_prestamo(monto: float, agent_id: str) -> dict[str, Any]:
         logger.exception("Error al solicitar préstamo para %s", agent_id)
         return {
             "error": True,
-            "mensaje": "No se pudo procesar la solicitud de préstamo.",
+            "message": "No se pudo procesar la solicitud de préstamo.",
             "agent_id": agent_id,
         }
 
@@ -136,7 +136,7 @@ async def tasas_interes() -> dict[str, Any]:
         logger.exception("Error al obtener tasas de interés")
         return {
             "error": True,
-            "mensaje": "No se pudieron obtener las tasas de interés.",
+            "message": "No se pudieron obtener las tasas de interés.",
         }
 
 

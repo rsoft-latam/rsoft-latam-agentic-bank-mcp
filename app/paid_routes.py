@@ -36,11 +36,11 @@ async def paid_tasas_interes() -> dict[str, Any]:
 async def paid_solicitar_prestamo(body: dict) -> dict[str, Any]:
     """Request a loan (x402 payment required: 0.01 USDC)."""
     agent_id = body.get("agent_id", "")
-    monto = body.get("monto", 0)
+    monto = body.get("amount", 0)
 
     if not agent_id:
-        return {"error": True, "mensaje": "agent_id es requerido."}
+        return {"error": True, "message": "agent_id es requerido."}
     if monto <= 0:
-        return {"error": True, "mensaje": "El monto debe ser mayor a 0."}
+        return {"error": True, "message": "El monto debe ser mayor a 0."}
 
     return await solicitar_prestamo(agent_id=agent_id, monto=monto)
