@@ -17,9 +17,9 @@ from fastapi import FastAPI
 from mcp.server.fastmcp import FastMCP
 
 from app.backend_client import (
-    consultar_solvencia as _consultar_solvencia,
-    obtener_tasas_interes as _obtener_tasas_interes,
-    solicitar_prestamo as _solicitar_prestamo,
+    get_creditworthiness as _get_creditworthiness,
+    get_interest_rates as _get_interest_rates,
+    request_loan as _request_loan,
 )
 from app.config import get_settings
 
@@ -32,10 +32,10 @@ _settings = get_settings()
 mcp = FastMCP(
     "RSoft_Agentic_Bank",
     instructions=(
-        "Servidor bancario inteligente de RSoft Latam. "
-        "Permite consultar solvencia crediticia de agentes, solicitar préstamos "
-        "que se evalúan con IA y se ejecutan en la red Base (L2), "
-        "y consultar las tasas de interés vigentes."
+        "RSoft Latam intelligent banking server. "
+        "Allows querying agent creditworthiness, requesting loans "
+        "evaluated by AI and executed on the Base network (L2), "
+        "and consulting current interest rates."
     ),
     host=_settings.mcp_host,
     port=_settings.mcp_port,
@@ -49,71 +49,71 @@ mcp = FastMCP(
 
 
 @mcp.tool()
-async def consultar_solvencia(agent_id: str) -> dict[str, Any]:
-    """Consulta la solvencia y el historial crediticio de un agente.
+async def get_creditworthiness(agent_id: str) -> dict[str, Any]:
+    """Query the creditworthiness and credit history of an agent.
 
-    Usa esta herramienta cuando necesites:
-    - Verificar si un agente tiene buen historial crediticio.
-    - Obtener el score crediticio actual de un agente.
-    - Conocer la deuda vigente de un agente antes de aprobar una operación.
-    - Evaluar el riesgo de un agente previo a una solicitud de préstamo.
+    Use this tool when you need to:
+    - Verify whether an agent has a good credit history.
+    - Obtain the current credit score of an agent.
+    - Check the outstanding debt of an agent before approving an operation.
+    - Assess the risk of an agent prior to a loan request.
 
     Args:
-        agent_id: Identificador único del agente en el sistema bancario.
-                  Ejemplo: "agent_0x1a2b3c".
+        agent_id: Unique identifier of the agent in the banking system.
+                  Example: "agent_0x1a2b3c".
 
     Returns:
-        Diccionario con: agent_id, score (0-850), historial (lista de registros),
-        deuda_actual (float en USDC) y estado ("activo" | "moroso" | "sin_registro").
+        Dictionary with: agent_id, score (0-850), history (list of records),
+        current_debt (float in USDC) and status ("active" | "delinquent" | "unregistered").
     """
     try:
-        return await _consultar_solvencia(agent_id)
-    except Exception as exc:
-        logger.exception("Error al consultar solvencia para %s", agent_id)
+        return await _get_creditworthiness(agent_id)
+    except Exception:
+        logger.exception("Error fetching creditworthiness for %s", agent_id)
         return {
             "error": True,
-            "message": "No se pudo consultar la solvencia del agente.",
+            "message": "Could not fetch the agent's creditworthiness.",
             "agent_id": agent_id,
         }
 
 
 @mcp.tool()
-async def solicitar_prestamo(monto: float, agent_id: str) -> dict[str, Any]:
-    """Solicita un préstamo que se evalúa con IA y, si se aprueba, ejecuta la
-    transferencia de USDC en la red Base (L2).
+async def request_loan(amount: float, agent_id: str) -> dict[str, Any]:
+    """Request a loan that is evaluated by AI and, if approved, executes a
+    USDC transfer on the Base network (L2).
 
-    Usa esta herramienta cuando:
-    - Un agente necesita financiamiento en USDC.
-    - Se requiere ejecutar el flujo completo: evaluación de riesgo → aprobación →
-      transferencia on-chain.
-    - El agente ya fue verificado con `consultar_solvencia` y desea proceder.
+    Use this tool when:
+    - An agent needs USDC financing.
+    - The full flow is required: risk evaluation → approval →
+      on-chain transfer.
+    - The agent has already been verified with `get_creditworthiness` and wants to proceed.
 
     Args:
-        monto: Monto del préstamo solicitado en USDC. Debe ser > 0.
-               Ejemplo: 5000.00
-        agent_id: Identificador único del agente solicitante.
-                  Ejemplo: "agent_0x1a2b3c".
+        amount: Requested loan amount in USDC. Must be > 0.
+                Example: 5000.00
+        agent_id: Unique identifier of the requesting agent.
+                  Example: "agent_0x1a2b3c".
 
     Returns:
-        Diccionario con el resultado de la solicitud:
-        - Si aprobado: incluye tx_hash, block_number, monto, estado "aprobado".
-        - Si rechazado: incluye motivo del rechazo y estado "rechazado".
-        - Si error: incluye detalle del error.
+        Dictionary with the request result:
+        - If approved: includes tx_hash, block_number, amount, status "approved".
+        - If rejected: includes rejection reason and status "rejected".
+        - If error: includes error detail.
     """
-    if monto <= 0:
+    if amount <= 0:
         return {
             "error": True,
-            "message": "El monto debe ser mayor a 0.",
+            "message": "Amount must be greater than 0.",
             "agent_id": agent_id,
         }
 
     try:
-        return await _solicitar_prestamo(agent_id=agent_id, monto=monto)
-    except Exception as exc:
-        logger.exception("Error al solicitar préstamo para %s", agent_id)
+        return await _request_loan(agent_id=agent_id, amount=amount)
+    except Exception:
+        logger.exception("Error requesting loan for %s", agent_id)
         return {
             "error": True,
-            "message": "No se pudo procesar la solicitud de préstamo.",
+            "message": "Could not process the loan request.",
             "agent_id": agent_id,
         }
 
@@ -123,20 +123,20 @@ async def solicitar_prestamo(monto: float, agent_id: str) -> dict[str, Any]:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-@mcp.resource("bank://tasas_interes")
-async def tasas_interes() -> dict[str, Any]:
-    """Tasas de interés vigentes del banco RSoft.
+@mcp.resource("bank://interest_rates")
+async def interest_rates() -> dict[str, Any]:
+    """Current interest rates for RSoft bank.
 
-    Devuelve las tasas actuales para distintos tipos de préstamo,
-    incluyendo moneda (USDC), red (Base) y fecha de última actualización.
+    Returns the current rates for different loan types,
+    including currency (USDC), network (Base) and last update date.
     """
     try:
-        return await _obtener_tasas_interes()
-    except Exception as exc:
-        logger.exception("Error al obtener tasas de interés")
+        return await _get_interest_rates()
+    except Exception:
+        logger.exception("Error fetching interest rates")
         return {
             "error": True,
-            "message": "No se pudieron obtener las tasas de interés.",
+            "message": "Could not fetch interest rates.",
         }
 
 
@@ -188,7 +188,7 @@ def _build_combined_app() -> FastAPI:
             server.register(network, ExactEvmServerScheme())
 
             routes = {
-                "GET /paid/tasas-interes": RouteConfig(
+                "GET /paid/interest-rates": RouteConfig(
                     accepts=[
                         PaymentOption(
                             scheme="exact",
@@ -198,9 +198,9 @@ def _build_combined_app() -> FastAPI:
                         ),
                     ],
                     mime_type="application/json",
-                    description="Tasas de interés vigentes del banco RSoft",
+                    description="Current interest rates for RSoft bank",
                 ),
-                "POST /paid/prestamo": RouteConfig(
+                "POST /paid/loans": RouteConfig(
                     accepts=[
                         PaymentOption(
                             scheme="exact",
@@ -210,7 +210,7 @@ def _build_combined_app() -> FastAPI:
                         ),
                     ],
                     mime_type="application/json",
-                    description="Solicitar préstamo USDC via RSoft Agentic Bank",
+                    description="Request a USDC loan via RSoft Agentic Bank",
                 ),
             }
 

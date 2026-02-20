@@ -83,22 +83,22 @@ BACKEND_URL=https://your-backend.example.com/api/v1
 
 | Tool | Description |
 |---|---|
-| `consultar_solvencia(agent_id)` | Credit history & score for an agent |
-| `solicitar_prestamo(monto, agent_id)` | Full loan flow: risk eval, approval, on-chain transfer |
+| `get_creditworthiness(agent_id)` | Credit history & score for an agent |
+| `request_loan(amount, agent_id)` | Full loan flow: risk eval, approval, on-chain transfer |
 
 ## MCP Resources
 
 | URI | Description |
 |---|---|
-| `bank://tasas_interes` | Current interest rates |
+| `bank://interest_rates` | Current interest rates |
 
 ## Backend endpoints used
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `GET` | `/agentes/{agent_id}/solvencia` | Fetch agent credit history |
-| `POST` | `/prestamos` | Request a loan (`{agent_id, monto}`) |
-| `GET` | `/tasas-interes` | Fetch current interest rates |
+| `GET` | `/agents/{agent_id}/creditworthiness` | Fetch agent credit history |
+| `POST` | `/loans` | Request a loan (`{agent_id, amount}`) |
+| `GET` | `/interest-rates` | Fetch current interest rates |
 
 ## Project structure
 

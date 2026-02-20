@@ -24,7 +24,7 @@ def _get_client() -> httpx.AsyncClient:
     return _client
 
 
-async def consultar_solvencia(agent_id: str) -> dict[str, Any]:
+async def get_creditworthiness(agent_id: str) -> dict[str, Any]:
     """Fetch credit history for a given agent from the backend."""
     client = _get_client()
     response = await client.get(f"/agents/{agent_id}/creditworthiness")
@@ -32,18 +32,18 @@ async def consultar_solvencia(agent_id: str) -> dict[str, Any]:
     return response.json()
 
 
-async def solicitar_prestamo(agent_id: str, monto: float) -> dict[str, Any]:
+async def request_loan(agent_id: str, amount: float) -> dict[str, Any]:
     """Request a loan through the backend (risk evaluation + blockchain transfer)."""
     client = _get_client()
     response = await client.post(
         "/loans",
-        json={"agent_id": agent_id, "amount": monto},
+        json={"agent_id": agent_id, "amount": amount},
     )
     response.raise_for_status()
     return response.json()
 
 
-async def obtener_tasas_interes() -> dict[str, Any]:
+async def get_interest_rates() -> dict[str, Any]:
     """Fetch current interest rates from the backend."""
     client = _get_client()
     response = await client.get("/interest-rates")
