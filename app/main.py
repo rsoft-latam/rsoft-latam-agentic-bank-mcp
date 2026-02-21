@@ -162,6 +162,14 @@ def _build_combined_app() -> FastAPI:
     mcp_app = mcp.streamable_http_app()
     app.mount("/mcp", mcp_app)
 
+    # Fix: Mangum/Lambda strips trailing slashes, causing a 307 redirect loop
+    # on app.mount("/mcp"). This middleware adds the slash back before routing.
+    @app.middleware("http")
+    async def fix_mcp_trailing_slash(request, call_next):
+        if request.url.path == "/mcp":
+            request.scope["path"] = "/mcp/"
+        return await call_next(request)
+
     # Add x402 payment middleware if wallet is configured
     if _settings.bank_wallet_address:
         try:
