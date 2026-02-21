@@ -40,6 +40,7 @@ mcp = FastMCP(
     host=_settings.mcp_host,
     port=_settings.mcp_port,
     stateless_http=True,
+    streamable_http_path="/",
 )
 
 
