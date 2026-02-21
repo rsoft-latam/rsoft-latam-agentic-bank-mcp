@@ -158,9 +158,9 @@ def _build_combined_app() -> FastAPI:
     # Mount paid REST routes
     app.include_router(paid_router)
 
-    # Mount MCP app at /mcp
+    # Mount MCP app at root (FastAPI routes above take priority)
     mcp_app = mcp.streamable_http_app()
-    app.mount("/mcp", mcp_app)
+    app.mount("/", mcp_app)
 
     # Add x402 payment middleware if wallet is configured
     if _settings.bank_wallet_address:
