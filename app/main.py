@@ -1,11 +1,12 @@
-"""RSoft Agentic Bank — MCP Server + x402 Paid REST API.
+"""RSoft Agentic Bank — MCP Server + Free & Paid REST API.
 
 Thin proxy layer that exposes banking tools and resources to LLM agents
 via the Model Context Protocol, delegating all logic to the RSoft Agentic
 Bank backend.
 
-Additionally serves paid REST endpoints at /paid/* that require x402
-USDC micropayments on Base (Coinbase L2).
+Additionally serves:
+- Free REST endpoints at /api/* for agents without MCP support.
+- Paid REST endpoints at /paid/* that require x402 USDC micropayments on Base.
 """
 
 from __future__ import annotations
@@ -146,29 +147,21 @@ async def interest_rates() -> dict[str, Any]:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-def _build_combined_app() -> FastAPI:
-    """Build a FastAPI app that serves both MCP and paid REST endpoints."""
+def _build_fastapi_app() -> FastAPI:
+    """Build the FastAPI app for non-MCP routes (health, free REST, paid REST, x402)."""
+    from app.free_routes import free_router
     from app.paid_routes import paid_router
 
     app = FastAPI(
-        title="RSoft Agentic Bank — MCP + Paid API",
-        version="1.27.0",
+        title="RSoft Agentic Bank — MCP + Free & Paid API",
+        version="1.28.0",
     )
 
-    # Mount paid REST routes
+    # Mount free REST routes (/api/*)
+    app.include_router(free_router)
+
+    # Mount paid REST routes (/paid/*)
     app.include_router(paid_router)
-
-    # Mount MCP app at /mcp (internal path is "/" via streamable_http_path)
-    mcp_app = mcp.streamable_http_app()
-    app.mount("/mcp", mcp_app)
-
-    # Fix: Mangum/Lambda strips trailing slashes, causing a 307 redirect loop
-    # on app.mount("/mcp"). This middleware adds the slash back before routing.
-    @app.middleware("http")
-    async def fix_mcp_trailing_slash(request, call_next):
-        if request.url.path == "/mcp":
-            request.scope["path"] = "/mcp/"
-        return await call_next(request)
 
     # Add x402 payment middleware if wallet is configured
     if _settings.bank_wallet_address:
@@ -250,6 +243,43 @@ def _build_combined_app() -> FastAPI:
     return app
 
 
+class LambdaCombinedApp:
+    """ASGI app that routes /mcp to a fresh MCP session per request,
+    and everything else to the FastAPI app.
+
+    Lambda's execution model conflicts with MCP's session_manager.run()
+    which can only be called once per instance. This wrapper creates a
+    fresh MCP app + session manager per /mcp request, solving both the
+    307 redirect loop and the task group initialization issue.
+    """
+
+    def __init__(self, fastapi_app: FastAPI) -> None:
+        self.fastapi_app = fastapi_app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "lifespan":
+            # Let FastAPI handle lifespan events
+            await self.fastapi_app(scope, receive, send)
+            return
+
+        path = scope.get("path", "")
+
+        if scope["type"] == "http" and path.rstrip("/") == "/mcp":
+            # Create a fresh MCP app with a new session manager per request
+            mcp._session_manager = None
+            mcp_starlette = mcp.streamable_http_app()
+
+            # Rewrite path to "/" (the streamable_http_path)
+            scope = dict(scope)
+            scope["path"] = "/"
+
+            # Run session manager lifecycle and handle request
+            async with mcp._session_manager.run():
+                await mcp_starlette(scope, receive, send)
+        else:
+            await self.fastapi_app(scope, receive, send)
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # ENTRYPOINT
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -272,13 +302,10 @@ def main() -> None:
 try:
     from mangum import Mangum
 
-    # Build the combined app (MCP + paid routes + x402)
-    _combined_app = _build_combined_app()
+    _fastapi_app = _build_fastapi_app()
+    _combined_app = LambdaCombinedApp(_fastapi_app)
 
     def lambda_handler(event, context):
-        # Reset MCP session manager per invocation
-        mcp._session_manager = None
-
         handler = Mangum(_combined_app, lifespan="off")
         return handler(event, context)
 
