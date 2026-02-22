@@ -21,6 +21,8 @@ from app.backend_client import (
     get_creditworthiness as _get_creditworthiness,
     get_interest_rates as _get_interest_rates,
     request_loan as _request_loan,
+    get_repayment_info as _get_repayment_info,
+    confirm_repayment as _confirm_repayment,
 )
 from app.config import get_settings
 
@@ -117,6 +119,64 @@ async def request_loan(amount: float, agent_id: str) -> dict[str, Any]:
             "error": True,
             "message": "Could not process the loan request.",
             "agent_id": agent_id,
+        }
+
+
+@mcp.tool()
+async def get_repayment_info(agent_id: str) -> dict[str, Any]:
+    """Get how much an agent currently owes on its active loan.
+
+    Use this tool when:
+    - An agent wants to know its outstanding debt.
+    - An agent is preparing to repay a loan.
+
+    Returns the breakdown: principal, interest, and total repayment amount
+    in USDC, plus the request_id needed for confirm_repayment.
+
+    Args:
+        agent_id: Wallet address or DID of the agent.
+                  Example: "0xB684898D3f4437D93848456141445c66Aa322B13".
+
+    Returns:
+        Dictionary with: request_id, principal, interest, repayment_amount, currency.
+    """
+    try:
+        return await _get_repayment_info(agent_id)
+    except Exception:
+        logger.exception("Error fetching repayment info for %s", agent_id)
+        return {
+            "error": True,
+            "message": "Could not fetch repayment info. The agent may not have an active loan.",
+            "agent_id": agent_id,
+        }
+
+
+@mcp.tool()
+async def confirm_repayment(request_id: str, tx_hash: str) -> dict[str, Any]:
+    """Confirm a loan repayment after the agent has sent USDC to the treasury.
+
+    Use this tool AFTER the agent has already sent the USDC transfer on-chain.
+    The backend will verify the transaction on Base Sepolia and mark the loan
+    as repaid.
+
+    Args:
+        request_id: The loan request ID (from get_repayment_info).
+                    Example: "req_ff52a828921557a26d530fca".
+        tx_hash:    The transaction hash of the USDC transfer.
+                    Example: "0xabc123...".
+
+    Returns:
+        Dictionary with repayment confirmation: status, principal_repaid,
+        interest_paid, total_repaid, tx_hash.
+    """
+    try:
+        return await _confirm_repayment(request_id=request_id, tx_hash=tx_hash)
+    except Exception:
+        logger.exception("Error confirming repayment for %s", request_id)
+        return {
+            "error": True,
+            "message": "Could not confirm repayment. Please verify the tx_hash.",
+            "request_id": request_id,
         }
 
 

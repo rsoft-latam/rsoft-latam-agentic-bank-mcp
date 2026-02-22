@@ -22,6 +22,8 @@ from app.backend_client import (
     get_creditworthiness,
     get_interest_rates,
     request_loan,
+    get_repayment_info,
+    confirm_repayment,
 )
 
 logger = logging.getLogger(__name__)
@@ -67,3 +69,32 @@ async def free_request_loan(body: dict) -> dict[str, Any]:
     except Exception:
         logger.exception("Error requesting loan for %s", agent_id)
         return {"error": True, "message": "Could not process the loan request.", "agent_id": agent_id}
+
+
+@free_router.get("/repay-info/{agent_id}")
+async def free_repay_info(agent_id: str) -> dict[str, Any]:
+    """Get repayment info for an agent's active loan (free)."""
+    try:
+        return await get_repayment_info(agent_id)
+    except Exception:
+        logger.exception("Error fetching repayment info for %s", agent_id)
+        return {"error": True, "message": "Could not fetch repayment info.", "agent_id": agent_id}
+
+
+@free_router.post("/repay")
+@free_router.post("/loans/repay")
+async def free_confirm_repayment(body: dict) -> dict[str, Any]:
+    """Confirm loan repayment with tx_hash (free)."""
+    request_id = body.get("request_id", "")
+    tx_hash = body.get("tx_hash", "")
+
+    if not request_id:
+        return {"error": True, "message": "request_id is required."}
+    if not tx_hash:
+        return {"error": True, "message": "tx_hash is required."}
+
+    try:
+        return await confirm_repayment(request_id=request_id, tx_hash=tx_hash)
+    except Exception:
+        logger.exception("Error confirming repayment for %s", request_id)
+        return {"error": True, "message": "Could not confirm repayment.", "request_id": request_id}
